@@ -21,7 +21,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
+
+	"golang.org/x/crypto/sha3"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -31,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/bn256"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/open-quantum-safe/liboqs-go/oqs"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -119,6 +123,10 @@ var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{16}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{17}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{18}): &bls12381MapG2{},
+}
+
+var PrecompiledContractsPostQuantum = map[common.Address]PrecompiledContract{
+	common.BytesToAddress([]byte{19}): &falcon512{},
 }
 
 var (
@@ -1134,4 +1142,45 @@ func kZGToVersionedHash(kzg kzg4844.Commitment) common.Hash {
 	h[0] = blobCommitmentVersionKZG
 
 	return h
+}
+
+// FALCON512 implementation precompile
+type falcon512 struct{}
+
+func (c *falcon512) RequiredGas(input []byte) uint64 {
+	return params.Falcon512Gas
+}
+
+// returns a shake256 digest with an output of 32 bytes thus 128 security bits
+func (c *falcon512) Run(input []byte) ([]byte, error) {
+	sigName := "Falcon-512"
+	verifier := oqs.Signature{}
+	defer verifier.Clean() // clean up even in case of panic
+
+	if err := verifier.Init(sigName, nil); err != nil {
+		log.Fatal(err)
+	}
+
+	var (
+		signatureOffset = new(big.Int).SetBytes(getData(input, 0, 32)).Uint64()
+		pubKeyOffset    = new(big.Int).SetBytes(getData(input, 32, 32)).Uint64()
+		signatureLength = new(big.Int).SetBytes(getData(input, signatureOffset, 32)).Uint64()
+		pubKeyLength    = new(big.Int).SetBytes(getData(input, pubKeyOffset, 32)).Uint64()
+		dataLength      = 32
+		signatureSlice  = getData(input, signatureOffset+32, signatureLength)
+		pubKeySlice     = getData(input, pubKeyOffset+32, pubKeyLength)
+		dataSlice       = getData(input, 64, uint64(dataLength))
+	)
+
+	isValid, err := verifier.Verify(dataSlice, signatureSlice, pubKeySlice)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	digest := make([]byte, 32)
+	if isValid {
+		sha3.ShakeSum256(digest, pubKeySlice)
+	}
+
+	return digest, nil
 }

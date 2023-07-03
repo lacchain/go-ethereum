@@ -169,6 +169,9 @@ const (
 	BlobTxMinDataGasprice              = 1       // Minimum gas price for data blobs
 	BlobTxDataGaspriceUpdateFraction   = 2225652 // Controls the maximum rate of change for data gas price
 	BlobTxPointEvaluationPrecompileGas = 50000   // Gas price for the point evaluation precompile.
+	// Postquantum Gas costs
+	// Falcon-512
+	Falcon512Gas uint64 = 2350 // Gas price for FALCON-512 signature validation
 )
 
 // Gas discount table for BLS12-381 G1 and G2 multi exponentiation operations
