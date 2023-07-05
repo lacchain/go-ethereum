@@ -21,7 +21,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"math/big"
 
 	"golang.org/x/crypto/sha3"
@@ -1151,33 +1150,58 @@ func (c *falcon512) RequiredGas(input []byte) uint64 {
 	return params.Falcon512Gas
 }
 
+const (
+	falconDataLenght        = 32
+	falconSignatureName     = "Falcon-512"
+)
+
+var (
+	errFalcon512InvalidInput = errors.New("invalid input")
+	errFalcon512FailedVerifierInitilization = errors.New("error initializing Falcon verifier")
+)
+
 // returns a shake256 digest with an output of 32 bytes thus 128 security bits
 func (c *falcon512) Run(input []byte) ([]byte, error) {
-	sigName := "Falcon-512"
 	verifier := oqs.Signature{}
 	defer verifier.Clean() // clean up even in case of panic
 
-	if err := verifier.Init(sigName, nil); err != nil {
-		log.Fatal(err)
+	if err := verifier.Init(falconSignatureName, nil); err != nil {
+		return nil, errFalcon512FailedVerifierInitilization
 	}
 
-	var (
-		signatureOffset = new(big.Int).SetBytes(getData(input, 0, 32)).Uint64()
-		pubKeyOffset    = new(big.Int).SetBytes(getData(input, 32, 32)).Uint64()
-		signatureLength = new(big.Int).SetBytes(getData(input, signatureOffset, 32)).Uint64()
-		pubKeyLength    = new(big.Int).SetBytes(getData(input, pubKeyOffset, 32)).Uint64()
-		dataLength      = 32
-		signatureSlice  = getData(input, signatureOffset+32, signatureLength)
-		pubKeySlice     = getData(input, pubKeyOffset+32, pubKeyLength)
-		dataSlice       = getData(input, 64, uint64(dataLength))
-	)
-
-	isValid, err := verifier.Verify(dataSlice, signatureSlice, pubKeySlice)
-	if err != nil {
-		log.Fatal(err)
+	if len(input) < 96 {
+		return nil, errFalcon512InvalidInput
 	}
+
+	signatureOffset := new(big.Int).SetBytes(getData(input, 0, 32)).Uint64()
+	pubKeyOffset    := new(big.Int).SetBytes(getData(input, 32, 32)).Uint64()
+	dataSlice       := getData(input, 64, uint64(falconDataLenght))
+
+	if len(input) < int(signatureOffset) + 32 || len(input) < int(pubKeyOffset) + 32 || signatureOffset == 0 || pubKeyOffset == 0 {
+		return nil, errFalcon512InvalidInput
+	}
+	signatureLength := new(big.Int).SetBytes(getData(input, signatureOffset, 32)).Uint64()
+	pubKeyLength    := new(big.Int).SetBytes(getData(input, pubKeyOffset, 32)).Uint64()
+
+	if signatureLength == 0 || pubKeyLength == 0 {
+		return nil, errFalcon512InvalidInput
+	}
+	
+	if len(input) < int(signatureOffset) + 32 + int(signatureLength) {
+		return nil, errFalcon512InvalidInput
+	}
+	signatureSlice  := getData(input, signatureOffset+32, signatureLength)
+
+	if len(input) < int(pubKeyOffset) + 32 + int(pubKeyLength) {
+		return nil, errFalcon512InvalidInput
+	}
+	pubKeySlice     := getData(input, pubKeyOffset+32, pubKeyLength)
 
 	digest := make([]byte, 32)
+	isValid, err := verifier.Verify(dataSlice, signatureSlice, pubKeySlice)
+	if err != nil {
+		return nil, errFalcon512InvalidInput
+	}
 	if isValid {
 		sha3.ShakeSum256(digest, pubKeySlice)
 	}
