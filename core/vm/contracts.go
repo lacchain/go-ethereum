@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/bn256"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/open-quantum-safe/liboqs-go/oqs"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -119,6 +120,10 @@ var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{16}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{17}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{18}): &bls12381MapG2{},
+}
+
+var PrecompiledContractsPostQuantum = map[common.Address]PrecompiledContract{
+	common.BytesToAddress([]byte{19}): &falcon512{},
 }
 
 var (
@@ -1134,4 +1139,102 @@ func kZGToVersionedHash(kzg kzg4844.Commitment) common.Hash {
 	h[0] = blobCommitmentVersionKZG
 
 	return h
+}
+
+// FALCON512 implementation precompile
+type falcon512 struct{}
+
+func (c *falcon512) RequiredGas(input []byte) uint64 {
+	return uint64(len(input)+31)/32*params.Falcon512PerWordGas + params.Falcon512BaseGas
+}
+
+const (
+	falcon512SignatureName   = "Falcon-512"
+	falcon512MethodSignature = 0xde8f50a1 // verify(bytes,bytes,bytes)
+	falcon512PublicKeyLength = 897
+)
+
+var (
+	errFalcon512InvalidMethodSignatureLength = errors.New("invalid input format")
+	errFalcon512FailedVerifierInitilization  = errors.New("error initializing Falcon verifier")
+	errFalconInvalidMethodSignature          = errors.New("invalid method signature")
+)
+
+// returns bytes32(0) if signature is valid, bytes32(1) otherwise
+func (c *falcon512) Run(input []byte) ([]byte, error) {
+	verifier := oqs.Signature{}
+	defer verifier.Clean() // clean up even in case of panic
+
+	if err := verifier.Init(falcon512SignatureName, nil); err != nil {
+		return nil, errFalcon512FailedVerifierInitilization
+	}
+
+	if len(input) < 4 { // verifes method signature
+		return nil, errFalcon512InvalidMethodSignatureLength
+	}
+
+	if new(big.Int).SetBytes(getData(input, 0, 4)).Uint64() != falcon512MethodSignature {
+		return nil, errFalconInvalidMethodSignature
+	}
+
+	digest := make([]byte, 32)
+	digest[31] = 1
+
+	input = getData(input, 4, uint64(len(input)))
+
+	if len(input) < 96 {
+		return digest, nil
+	}
+
+	signatureOffset := new(big.Int).SetBytes(getData(input, 0, 32)).Uint64()
+	pubKeyOffset := new(big.Int).SetBytes(getData(input, 32, 32)).Uint64()
+	dataOffset := new(big.Int).SetBytes(getData(input, 64, 32)).Uint64()
+
+	if signatureOffset == 0 || pubKeyOffset == 0 || dataOffset == 0 {
+		return digest, nil
+	}
+	if len(input) < int(signatureOffset)+32 || signatureOffset == 0 {
+		return digest, nil
+	}
+	signatureLength := new(big.Int).SetBytes(getData(input, signatureOffset, 32)).Uint64()
+	if signatureLength == 0 {
+		return digest, nil
+	}
+	if len(input) < int(signatureOffset)+32+int(signatureLength) {
+		return digest, nil
+	}
+	signatureSlice := getData(input, signatureOffset+32, signatureLength)
+
+	if len(input) < int(pubKeyOffset)+32 {
+		return digest, nil
+	}
+	pubKeyLength := new(big.Int).SetBytes(getData(input, pubKeyOffset, 32)).Uint64()
+	if pubKeyLength == 0 {
+		return digest, nil
+	}
+	if len(input) < int(pubKeyOffset)+32+int(pubKeyLength) {
+		return digest, nil
+	}
+	pubKeySlice := getData(input, pubKeyOffset+32, pubKeyLength)
+
+	if len(input) < int(dataOffset)+32 {
+		return digest, nil
+	}
+	dataLength := new(big.Int).SetBytes(getData(input, dataOffset, 32)).Uint64()
+	if dataLength == 0 {
+		return digest, nil
+	}
+	if len(input) < int(dataOffset)+32+int(dataLength) {
+		return digest, nil
+	}
+	dataSlice := getData(input, dataOffset+32, dataLength)
+
+	isValid, err := verifier.Verify(dataSlice, signatureSlice, pubKeySlice)
+	if err != nil {
+		return digest, nil
+	}
+	if isValid {
+		digest[31] = 0
+	}
+	return digest, nil
 }
