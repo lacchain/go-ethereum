@@ -171,8 +171,8 @@ const (
 	BlobTxPointEvaluationPrecompileGas = 50000   // Gas price for the point evaluation precompile.
 	// Postquantum Gas costs
 	// Falcon-512
-	Falcon512Gas     uint64 = 1465 // Gas price for FALCON-512 signature validation
-	Falcon512WordGas uint64 = 6    // Once per word of the Falcon512 operation's data.
+	Falcon512BaseGas    uint64 = 1465 // Once per FALCON-512 signature validation
+	Falcon512PerWordGas uint64 = 6    // Per word price for a Falcon512 signature validation.
 )
 
 // Gas discount table for BLS12-381 G1 and G2 multi exponentiation operations

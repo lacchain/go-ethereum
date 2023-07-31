@@ -1145,7 +1145,7 @@ func kZGToVersionedHash(kzg kzg4844.Commitment) common.Hash {
 type falcon512 struct{}
 
 func (c *falcon512) RequiredGas(input []byte) uint64 {
-	return uint64(len(input)+31)/32*params.Falcon512WordGas + params.Falcon512Gas
+	return uint64(len(input)+31)/32*params.Falcon512PerWordGas + params.Falcon512BaseGas
 }
 
 const (
@@ -1155,9 +1155,9 @@ const (
 )
 
 var (
-	errFalcon512InvalidInputFormat          = errors.New("invalid input format")
-	errFalcon512FailedVerifierInitilization = errors.New("error initializing Falcon verifier")
-	errFalconInvalidMethodSignature         = errors.New("invalid method signature")
+	errFalcon512InvalidMethodSignatureLength = errors.New("invalid input format")
+	errFalcon512FailedVerifierInitilization  = errors.New("error initializing Falcon verifier")
+	errFalconInvalidMethodSignature          = errors.New("invalid method signature")
 )
 
 // returns bytes32(0) if signature is valid, bytes32(1) otherwise
@@ -1169,66 +1169,72 @@ func (c *falcon512) Run(input []byte) ([]byte, error) {
 		return nil, errFalcon512FailedVerifierInitilization
 	}
 
-	if len(input) < 100 {
-		return nil, errFalcon512InvalidInputFormat
+	if len(input) < 4 { // verifes method signature
+		return nil, errFalcon512InvalidMethodSignatureLength
 	}
 
 	if new(big.Int).SetBytes(getData(input, 0, 4)).Uint64() != falcon512MethodSignature {
 		return nil, errFalconInvalidMethodSignature
 	}
 
+	digest := make([]byte, 32)
+	digest[31] = 1
+
 	input = getData(input, 4, uint64(len(input)))
+
+	if len(input) < 96 {
+		return digest, nil
+	}
 
 	signatureOffset := new(big.Int).SetBytes(getData(input, 0, 32)).Uint64()
 	pubKeyOffset := new(big.Int).SetBytes(getData(input, 32, 32)).Uint64()
 	dataOffset := new(big.Int).SetBytes(getData(input, 64, 32)).Uint64()
 
 	if signatureOffset == 0 || pubKeyOffset == 0 || dataOffset == 0 {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	if len(input) < int(signatureOffset)+32 || signatureOffset == 0 {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	signatureLength := new(big.Int).SetBytes(getData(input, signatureOffset, 32)).Uint64()
 	if signatureLength == 0 {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	if len(input) < int(signatureOffset)+32+int(signatureLength) {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	signatureSlice := getData(input, signatureOffset+32, signatureLength)
 
 	if len(input) < int(pubKeyOffset)+32 {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	pubKeyLength := new(big.Int).SetBytes(getData(input, pubKeyOffset, 32)).Uint64()
 	if pubKeyLength == 0 {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	if len(input) < int(pubKeyOffset)+32+int(pubKeyLength) {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	pubKeySlice := getData(input, pubKeyOffset+32, pubKeyLength)
 
 	if len(input) < int(dataOffset)+32 {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	dataLength := new(big.Int).SetBytes(getData(input, dataOffset, 32)).Uint64()
 	if dataLength == 0 {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	if len(input) < int(dataOffset)+32+int(dataLength) {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
 	dataSlice := getData(input, dataOffset+32, dataLength)
 
-	digest := make([]byte, 32)
 	isValid, err := verifier.Verify(dataSlice, signatureSlice, pubKeySlice)
 	if err != nil {
-		return nil, errFalcon512InvalidInputFormat
+		return digest, nil
 	}
-	if !isValid {
-		digest[31] = 1
+	if isValid {
+		digest[31] = 0
 	}
 	return digest, nil
 }
